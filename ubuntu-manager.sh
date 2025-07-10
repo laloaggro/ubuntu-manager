@@ -1,17 +1,18 @@
 #!/bin/bash
 
 # ==============================================
-#       SUPER UBUNTU ULTIMATE MANAGER v5.0
+#       SUPER UBUNTU ULTIMATE MANAGER v5.1
 # ==============================================
-# Versión: 5.0
+# Versión: 5.1
 # Autor: laloaggro
 # Contacto: laloaggro@gmail.com
 # Repositorio: https://github.com/laloaggro/ubuntu-manager
 # Licencia: MIT
+# Descripción: Suite completa de gestión para Ubuntu
 # ==============================================
 
 # ---- Configuración inicial ----
-# Colores para la interfaz
+# Colores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -21,30 +22,29 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Variables configurables
-CONFIG_DIR="$HOME/.config/ubuntu-manager"
-BACKUP_DIR="$CONFIG_DIR/backups"
-LOG_FILE="$CONFIG_DIR/ubuntu-manager.log"
-CONFIG_FILE="$CONFIG_DIR/config.conf"
+BACKUP_DIR="$HOME/Backups"
+LOG_FILE="/var/log/ubuntu_manager.log"
+CONFIG_FILE="$HOME/.ubuntu_manager.conf"
+SNAPSHOT_DIR="$HOME/system_snapshots"
 VERSION="5.0"
-AUTHOR="laloaggro"
-CONTACT="laloaggro@gmail.com"
-REPO="https://github.com/laloaggro/ubuntu-manager"
+AUTHOR="l4l0ag2r0"
 
-# Crear directorios de configuración si no existen
-mkdir -p "$CONFIG_DIR" "$BACKUP_DIR"
+# Crear directorios necesarios
+mkdir -p "$BACKUP_DIR" "$SNAPSHOT_DIR"
 
-# Configuración inicial si no existe
+# Cargar configuración
 if [ ! -f "$CONFIG_FILE" ]; then
     cat > "$CONFIG_FILE" <<EOL
-# Configuración Ubuntu Manager
+# Configuración SUPER UBUNTU MANAGER
 AUTO_UPDATE=1
 BACKUP_ENABLED=1
+MONITOR_INTERVAL=60
 THEME=default
 EOL
 fi
 source "$CONFIG_FILE"
 
-# ---- Funciones básicas ----
+# ---- Funciones de utilidad ----
 log() {
     echo -e "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
@@ -54,58 +54,71 @@ pause() {
     read -r
 }
 
-show_header() {
-    clear
-    echo -e "${YELLOW}============================================${NC}"
-    echo -e "${MAGENTA}   SUPER UBUNTU ULTIMATE MANAGER v$VERSION    ${NC}"
-    echo -e "${CYAN}          Autor: $AUTHOR            ${NC}"
-    echo -e "${BLUE}       Contacto: $CONTACT        ${NC}"
-    echo -e "${GREEN}    Repositorio: $REPO    ${NC}"
-    echo -e "${YELLOW}============================================${NC}\n"
-}
-
 check_root() {
-    if [ "$EUID" -ne 0 ]; then
+    if [[ $EUID -ne 0 ]]; then
         echo -e "${RED}Este comando requiere privilegios root. Usa 'sudo'.${NC}"
         return 1
     fi
     return 0
 }
 
-# ---- Funciones del sistema ----
+spinner() {
+    local pid=$!
+    local delay=0.1
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+show_header() {
+    clear
+    echo -e "${YELLOW}============================================${NC}"
+    echo -e "${MAGENTA}   SUPER UBUNTU ULTIMATE MANAGER v$VERSION    ${NC}"
+    echo -e "${CYAN}          Autor: $AUTHOR            ${NC}"
+    echo -e "${YELLOW}============================================${NC}"
+}
+
+# ---- Funciones principales ----
 system_update() {
     show_header
-    echo -e "${YELLOW}[ ACTUALIZACIÓN DEL SISTEMA ]${NC}"
+    echo -e "\n${YELLOW}[ ACTUALIZACIÓN DEL SISTEMA ]${NC}"
     log "Iniciando actualización del sistema"
     
-    echo -e "\n${CYAN}Actualizando lista de paquetes...${NC}"
-    sudo apt update | tee -a "$LOG_FILE"
+    sudo apt update | tee -a "$LOG_FILE" &
+    spinner
+    sudo apt upgrade -y | tee -a "$LOG_FILE" &
+    spinner
+    sudo apt autoremove -y | tee -a "$LOG_FILE" &
+    spinner
     
-    echo -e "\n${CYAN}Actualizando paquetes...${NC}"
-    sudo apt upgrade -y | tee -a "$LOG_FILE"
-    
-    echo -e "\n${CYAN}Limpiando paquetes innecesarios...${NC}"
-    sudo apt autoremove -y | tee -a "$LOG_FILE"
-    
-    log "Actualización completada"
-    echo -e "\n${GREEN}✅ Sistema actualizado correctamente${NC}"
+    log "${GREEN}Actualización completada${NC}"
+    echo -e "\n${GREEN}✅ Sistema actualizado${NC}"
     pause
 }
 
 security_scan() {
     show_header
-    echo -e "${YELLOW}[ HERRAMIENTAS DE SEGURIDAD ]${NC}"
+    echo -e "\n${YELLOW}[ ESCANEO DE SEGURIDAD AVANZADO ]${NC}"
     
-    echo -e "\n${CYAN}=== Escaneo de puertos abiertos ===${NC}"
+    echo -e "${CYAN}\n=== Puertos abiertos ===${NC}"
     sudo netstat -tulnp
     
-    echo -e "\n${CYAN}=== Servicios activos ===${NC}"
+    echo -e "${CYAN}\n=== Servicios activos ==="
     sudo systemctl list-units --type=service --state=running
     
-    echo -e "\n${CYAN}=== Archivos con permisos especiales ===${NC}"
-    sudo find / -type f \( -perm -4000 -o -perm -2000 \) -exec ls -l {} \; 2>/dev/null | head -n 20
+    echo -e "${CYAN}\n=== Archivos con permisos SUID ==="
+    sudo find / -type f -perm -4000 2>/dev/null | head -n 20
     
-    echo -e "\n${CYAN}=== Estado del firewall ===${NC}"
+    echo -e "${CYAN}\n=== Usuarios con acceso root ==="
+    sudo grep -Po '^sudo.+:\K.*$' /etc/group
+    
+    echo -e "${CYAN}\n=== Verificación de firewall ==="
     sudo ufw status verbose
     
     pause
@@ -114,41 +127,39 @@ security_scan() {
 network_tools() {
     while true; do
         show_header
-        echo -e "${YELLOW}[ HERRAMIENTAS DE RED ]${NC}"
-        echo -e "1) ${GREEN}Información de red${NC}"
-        echo -e "2) ${GREEN}Escanear redes WiFi${NC}"
+        echo -e "\n${YELLOW}[ HERRAMIENTAS DE RED ]${NC}"
+        echo -e "1) ${GREEN}Configuración de red${NC}"
+        echo -e "2) ${GREEN}Escaneo WiFi${NC}"
         echo -e "3) ${GREEN}Prueba de velocidad${NC}"
-        echo -e "4) ${GREEN}Diagnóstico de conexión${NC}"
+        echo -e "4) ${GREEN}Diagnóstico de red${NC}"
         echo -e "5) ${GREEN}Volver al menú principal${NC}"
         
-        read -p "Selecciona una opción (1-5): " choice
+        read -rp "Selecciona una opción (1-5): " net_choice
         
-        case $choice in
+        case $net_choice in
             1)
-                echo -e "\n${CYAN}=== Información de interfaces de red ===${NC}"
+                echo -e "\n${CYAN}=== CONFIGURACIÓN DE RED ===${NC}"
                 ip a
                 ;;
             2)
-                echo -e "\n${CYAN}=== Escaneo de redes WiFi disponibles ===${NC}"
-                sudo iwlist wlan0 scan | grep ESSID
+                echo -e "\n${CYAN}=== ESCANEO WIFI ===${NC}"
+                sudo iwlist scan | grep ESSID
                 ;;
             3)
-                echo -e "\n${CYAN}=== Ejecutando prueba de velocidad ===${NC}"
-                if ! command -v speedtest-cli &> /dev/null; then
-                    sudo apt install speedtest-cli -y
-                fi
-                speedtest-cli --simple
+                echo -e "\n${CYAN}=== PRUEBA DE VELOCIDAD ===${NC}"
+                sudo apt install speedtest-cli -y
+                speedtest-cli
                 ;;
             4)
-                echo -e "\n${CYAN}=== Diagnóstico de conexión a Internet ===${NC}"
+                echo -e "\n${CYAN}=== DIAGNÓSTICO DE RED ===${NC}"
                 ping -c 4 google.com
-                traceroute google.com -m 5
+                traceroute google.com
                 ;;
             5)
                 break
                 ;;
             *)
-                echo -e "${RED}Opción no válida${NC}"
+                echo -e "${RED}Opción inválida${NC}"
                 ;;
         esac
         pause
@@ -159,25 +170,26 @@ network_tools() {
 main_menu() {
     while true; do
         show_header
-        echo -e "${CYAN} MENÚ PRINCIPAL ${NC}"
+        echo -e "\n${CYAN} MENÚ PRINCIPAL ${NC}"
         echo -e "1) ${GREEN}Actualización del sistema${NC}"
         echo -e "2) ${GREEN}Herramientas de seguridad${NC}"
         echo -e "3) ${GREEN}Herramientas de red${NC}"
-        echo -e "4) ${GREEN}Salir${NC}"
+        echo -e "4) ${GREEN}Configuración${NC}"
+        echo -e "5) ${GREEN}Salir${NC}"
         
-        read -p "Selecciona una opción (1-4): " choice
+        read -rp "Selecciona una opción (1-5): " main_choice
         
-        case $choice in
+        case $main_choice in
             1) system_update ;;
             2) security_scan ;;
             3) network_tools ;;
-            4)
-                echo -e "\n${GREEN}¡Gracias por usar Ubuntu Manager!${NC}"
-                echo -e "${BLUE}Para más herramientas visita: $REPO ${NC}"
+            4) config_menu ;;
+            5)
+                echo -e "\n${GREEN}¡Hasta luego! 👋${NC}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}Opción no válida${NC}"
+                echo -e "${RED}Opción inválida${NC}"
                 pause
                 ;;
         esac
@@ -188,9 +200,8 @@ main_menu() {
 trap "echo -e '\n${RED}Script interrumpido. Saliendo...${NC}'; exit 1" SIGINT SIGTERM
 
 clear
-echo -e "${YELLOW}Iniciando Ubuntu Manager v$VERSION...${NC}"
-echo -e "${CYAN}Desarrollado por: $AUTHOR${NC}"
-echo -e "${BLUE}Contacto: $CONTACT${NC}"
+echo -e "${YELLOW}Cargando SUPER UBUNTU ULTIMATE MANAGER v$VERSION...${NC}"
+echo -e "${CYAN}Desarrollado por $AUTHOR${NC}"
 sleep 2
 
 main_menu
